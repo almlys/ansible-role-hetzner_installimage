@@ -51,6 +51,7 @@
   ansible.builtin.reboot:
     connect_timeout: 60
 
+# This part didn't work. (It stayed halted here. TODO: Fixme)
 - name: setup | remove server from local known_hosts file
   ansible.builtin.known_hosts:
     name: "{{ ansible_host }}"

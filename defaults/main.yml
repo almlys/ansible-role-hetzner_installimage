@@ -13,7 +13,7 @@ hetzner_installimage_esp: true
 hetzner_installimage_swraid: 1
 hetzner_installimage_swraidlevel: 1
 
-hetzner_installimage_hostname: "custom"
+hetzner_installimage_hostname: "{{ inventory_hostname }}"
 
 hetzner_installimage_image: "/root/images/Debian-bullseye-latest-amd64-base.tar.gz"
 
@@ -22,3 +22,24 @@ hetzner_installimage_image: "/root/images/Debian-bullseye-latest-amd64-base.tar.
 #
 # hetzner_installimage_sshkeys:
 #   - "key1"
+
+hetzner_installimage_partitions:
+  - mountpoint: /boot
+    filesystem: ext4
+    size: 1G
+  - mountpoint: lvm
+    filesystem: disk
+    size: all
+    encrypted: true
+
+hetzner_installimage_logical_volumes:
+  - vg: disk
+    name: root
+    mountpoint: /
+    filesystem: ext4
+    size: 65G
+  - vg: disk
+    name: home
+    mountpoint: /home
+    filesystem: ext4
+    size: all

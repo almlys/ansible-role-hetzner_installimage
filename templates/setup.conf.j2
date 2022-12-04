@@ -13,16 +13,19 @@ BOOTLOADER grub
 
 HOSTNAME {{ hetzner_installimage_hostname }}
 
+# Physical partitions
 {% if hetzner_installimage_esp %}
 PART /boot/efi esp 256M
 {% endif %}
-PART swap swap 32G
-PART /boot ext4 1G
-{% if hetzner_installimage_cryptpassword is defined and hetzner_installimage_cryptpassword|length %}
-PART /     ext4 all crypt
-{% else %}
-PART /     ext4 all
-{% endif %}
+{% for part in hetzner_installimage_partitions -%}
+  PART {{ part.mountpoint }} {{ part.filesystem }} {{ part.size }} {% if 'encrypted' in part and part.encrypted and hetzner_installimage_cryptpassword is defined and hetzner_installimage_cryptpassword|length %}crypt{% endif %}
+
+{% endfor %}
+
+# Logical volumes
+{% for lv in hetzner_installimage_logical_volumes -%}
+  LV {{ lv.vg }} {{ lv.name }} {{ lv.mountpoint }} {{ lv.filesystem }} {{ lv.size }}
+{% endfor %}
 
 IMAGE {{ hetzner_installimage_image }}
 SSHKEYS_URL /tmp/authorized_keys
