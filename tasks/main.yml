@@ -47,17 +47,77 @@
   ansible.builtin.debug:
     var: installimage_result.stdout
 
-- name: system | rebooting remote
-  ansible.builtin.reboot:
-    connect_timeout: 60
 
-# This part didn't work. (It stayed halted here. TODO: Fixme)
-- name: setup | remove server from local known_hosts file
-  ansible.builtin.known_hosts:
-    name: "{{ ansible_host }}"
-    state: absent
-  delegate_to: localhost
+- name: Perform First System Reboot and first password update.
+  block:
 
-- name: system | unlocking partition
-  ansible.builtin.raw: "echo -ne {{ hetzner_installimage_cryptpassword|quote }} > /lib/cryptsetup/passfifo"
+    - name: Check if molly-guard is installed
+      ansible.builtin.stat:
+        path: /lib/molly-guard/shutdown
+      register: molly_guard
+
+    - name: Reboot system now
+      ansible.builtin.shell: 'nohup /lib/molly-guard/shutdown -r now &'
+      async: 1
+      poll: 0
+      when: molly_guard.stat.exists
+      
+    - name: Reboot system now
+      ansible.builtin.shell: 'nohup /sbin/shutdown -r now &'
+      async: 1
+      poll: 0
+      when: not molly_guard.stat.exists
+
+    - name: Wait for 120 seconds
+      pause:
+        seconds: 120
+
+    - name: system | unlocking partition
+      ansible.builtin.raw: "echo -ne {{ hetzner_installimage_cryptpassword|quote }} > /lib/cryptsetup/passfifo"
+      remote_user: root
+      become: no
+      delegate_to: "{{ inventory_hostname }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+
+    - name: Wait for 120 seconds
+      pause:
+        seconds: 120
+
+    - name: Update password
+      block:
+
+        - name: Install necessary packages
+          apt:
+            name: expect
+            state: present
+    
+        - name: Change LUKS password
+          expect:
+            command: cryptsetup luksChangeKey /dev/md2
+            responses:
+              "Enter passphrase to be changed:": "{{ hetzner_installimage_cryptpassword }}"
+              "Enter new passphrase:": "{{ hetzner_installimage_cryptpassword_live }}"
+              "Verify passphrase:": "{{ hetzner_installimage_cryptpassword_live }}"
+              
+      when: (hetzner_installimage_cryptpassword_live is defined) and (hetzner_installimage_cryptpassword_live|length > 0)
+
   when: (hetzner_installimage_cryptpassword is defined) and (hetzner_installimage_cryptpassword|length > 0)
+
+
+# THIS WAS ORIGINAL CODE FOR REFERNCE DIDN'T WORK
+#- name: system | rebooting remote
+#  ansible.builtin.reboot:
+#    connect_timeout: 60
+#
+## This part didn't work. (It stayed halted here. TODO: Fixme)
+#- name: setup | remove server from local known_hosts file
+#  ansible.builtin.known_hosts:
+#    name: "{{ ansible_host }}"
+#    state: absent
+#  delegate_to: localhost
+#
+#- name: system | unlocking partition
+#  ansible.builtin.raw: "echo -ne {{ hetzner_installimage_cryptpassword|quote }} > /lib/cryptsetup/passfifo"
+#  when: (hetzner_installimage_cryptpassword is defined) and (hetzner_installimage_cryptpassword|length > 0)
