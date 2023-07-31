@@ -1,52 +1,80 @@
 ---
 
-- name: setup | setup.conf
-  ansible.builtin.template:
-    src: setup.conf.j2
-    dest: "/tmp/setup.conf"
-    force: yes
-    owner: "root"
-    mode: 0644
+- name: Hetzner Rescue system setup.
+  block:
 
-- name: setup | authorized_keys with existing keys
-  ansible.builtin.copy:
-    src: "/root/.ssh/authorized_keys"
-    dest: "/tmp/authorized_keys"
-    owner: "root"
-    mode: 0644
-    remote_src: yes
-  when: hetzner_installimage_sshkeys is not defined
+    - name: setup | resolve DNS to IP
+      set_fact:
+        ansible_host_ip: "{{ lookup('dig', ansible_host) }}"
+      delegate_to: localhost
 
-- name: setup | authorized_keys with provided keys
-  ansible.posix.authorized_key:
-    ansible.builtin.user: root
-    state: present
-    key: "{{ item }}"
-    path: "/tmp/authorized_keys"
-  loop: "{{ hetzner_installimage_sshkeys | default([]) }}"
-  when: hetzner_installimage_sshkeys | length > 0
+    - name: setup | remove server from local known_hosts file
+      ansible.builtin.known_hosts:
+        name: "{{ ansible_host }}"
+        state: absent
+      delegate_to: localhost
 
-- name: setup | authorized_keys with existing keys
-  ansible.builtin.copy:
-    src: "post-install.sh"
-    dest: "/tmp/post-install.sh"
-    owner: "root"
-    mode: 0755
+    - name: setup | remove server IP from local known_hosts file
+      ansible.builtin.known_hosts:
+        name: "{{ ansible_host_ip }}"
+        state: absent
+      delegate_to: localhost
 
-- name: debug | notify that installimage is runing
-  ansible.builtin.debug:
-    msg: "Running installimage. This will take a while, you can monitor /root/debug.txt on remote."
+    - name: Scan the public key of the remote host
+      known_hosts:
+        name: "{{ ansible_host }}"
+        key: "{{ lookup('pipe', 'ssh-keyscan -t rsa ' + ansible_host) }}"
+        state: present
+      delegate_to: localhost
 
-- name: shell | running installimage
-  ansible.builtin.command:
-    cmd: "/root/.oldroot/nfs/install/installimage -a -c /tmp/setup.conf -x /tmp/post-install.sh"
-  register: "installimage_result"
-  changed_when: installimage_result.rc != 0
+    - name: setup | setup.conf
+      ansible.builtin.template:
+        src: setup.conf.j2
+        dest: "/tmp/setup.conf"
+        force: yes
+        owner: "root"
+        mode: 0644
+    
+    - name: setup | authorized_keys with existing keys
+      ansible.builtin.copy:
+        src: "/root/.ssh/authorized_keys"
+        dest: "/tmp/authorized_keys"
+        owner: "root"
+        mode: 0644
+        remote_src: yes
+      when: hetzner_installimage_sshkeys is not defined
+    
+    - name: setup | authorized_keys with provided keys
+      ansible.posix.authorized_key:
+        ansible.builtin.user: root
+        state: present
+        key: "{{ item }}"
+        path: "/tmp/authorized_keys"
+      loop: "{{ hetzner_installimage_sshkeys | default([]) }}"
+      when: hetzner_installimage_sshkeys | length > 0
+    
+    - name: setup | authorized_keys with existing keys
+      ansible.builtin.copy:
+        src: "post-install.sh"
+        dest: "/tmp/post-install.sh"
+        owner: "root"
+        mode: 0755
+    
+    - name: debug | notify that installimage is runing
+      ansible.builtin.debug:
+        msg: "Running installimage. This will take a while, you can monitor /root/debug.txt on remote."
+    
+    - name: shell | running installimage
+      ansible.builtin.command:
+        cmd: "/root/.oldroot/nfs/install/installimage -a -c /tmp/setup.conf -x /tmp/post-install.sh"
+      register: "installimage_result"
+      changed_when: installimage_result.rc != 0
+    
+    - name: debug | output installimage results
+      ansible.builtin.debug:
+        var: installimage_result.stdout
 
-- name: debug | output installimage results
-  ansible.builtin.debug:
-    var: installimage_result.stdout
-
+  when: False
 
 - name: Perform First System Reboot and first password update.
   block:
@@ -61,16 +89,33 @@
       async: 1
       poll: 0
       when: molly_guard.stat.exists
-      
+
     - name: Reboot system now
       ansible.builtin.shell: 'nohup /sbin/shutdown -r now &'
       async: 1
       poll: 0
       when: not molly_guard.stat.exists
 
-    - name: Wait for 120 seconds
+    - name: setup | resolve DNS to IP
+      set_fact:
+        ansible_host_ip: "{{ lookup('dig', ansible_host) }}"
+      delegate_to: localhost
+
+    - name: setup | remove server from local known_hosts file
+      ansible.builtin.known_hosts:
+        name: "{{ ansible_host }}"
+        state: absent
+      delegate_to: localhost
+
+    - name: setup | remove server IP from local known_hosts file
+      ansible.builtin.known_hosts:
+        name: "{{ ansible_host_ip }}"
+        state: absent
+      delegate_to: localhost
+
+    - name: Wait for 60 seconds
       pause:
-        seconds: 120
+        seconds: 60
 
     - name: system | unlocking partition
       ansible.builtin.raw: "echo -ne {{ hetzner_installimage_cryptpassword|quote }} > /lib/cryptsetup/passfifo"
@@ -81,16 +126,25 @@
         ansible_user: root
         ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
 
-    - name: Wait for 120 seconds
+    - name: Wait for 60 seconds
       pause:
-        seconds: 120
+        seconds: 60
+
+    - name: Scan the public key of the remote host
+      known_hosts:
+        name: "{{ ansible_host }}"
+        key: "{{ lookup('pipe', 'ssh-keyscan -t rsa ' + ansible_host) }}"
+        state: present
+      delegate_to: localhost
 
     - name: Update password
       block:
 
         - name: Install necessary packages
           apt:
-            name: expect
+            name:
+              - expect
+              - python3-pexpect
             state: present
     
         - name: Change LUKS password
@@ -104,20 +158,3 @@
       when: (hetzner_installimage_cryptpassword_live is defined) and (hetzner_installimage_cryptpassword_live|length > 0)
 
   when: (hetzner_installimage_cryptpassword is defined) and (hetzner_installimage_cryptpassword|length > 0)
-
-
-# THIS WAS ORIGINAL CODE FOR REFERNCE DIDN'T WORK
-#- name: system | rebooting remote
-#  ansible.builtin.reboot:
-#    connect_timeout: 60
-#
-## This part didn't work. (It stayed halted here. TODO: Fixme)
-#- name: setup | remove server from local known_hosts file
-#  ansible.builtin.known_hosts:
-#    name: "{{ ansible_host }}"
-#    state: absent
-#  delegate_to: localhost
-#
-#- name: system | unlocking partition
-#  ansible.builtin.raw: "echo -ne {{ hetzner_installimage_cryptpassword|quote }} > /lib/cryptsetup/passfifo"
-#  when: (hetzner_installimage_cryptpassword is defined) and (hetzner_installimage_cryptpassword|length > 0)
